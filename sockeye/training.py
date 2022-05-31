@@ -317,7 +317,10 @@ class EarlyStoppingTrainer:
         batch = batch.load(device=self.device)
         with torch.cuda.amp.autocast(cache_enabled=False) if self.using_amp else utils.no_context():  # type: ignore
             # Forward
-            outputs = self.training_model(batch.source, batch.source_length, batch.target, batch.target_length)
+            forward_kwargs = {} if isinstance(self.training_model, torch.jit.ScriptModule) \
+                             else {'time_step': self.state.updates + 1}
+            outputs = self.training_model(batch.source, batch.source_length,
+                                          batch.target, batch.target_length, **forward_kwargs)
             # Loss (scaled by update interval)
             loss_outputs = [loss_function(outputs, batch.labels) for loss_function in self.loss_functions]
             # TODO(mdenkows): We currently give 1/N weight to every batch in the

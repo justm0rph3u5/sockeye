@@ -131,6 +131,9 @@ def check_arg_compatibility(args: argparse.Namespace):
         logger.warning('Specifying a non-float32 dtype to sockeye.train has no effect. Use --amp or --apex-amp for '
                        'mixed precision training.')
 
+    if args.transformer_pld_limit != (.0, .0):
+        check_condition(args.transformer_pld_steps_to_limit > 0, 'Specify --transformer-pld-steps-to-limit.')
+
 
 def check_resume(args: argparse.Namespace, output_folder: str) -> bool:
     """
@@ -444,6 +447,8 @@ def create_encoder_config(args: argparse.Namespace,
         dropout_attention=args.transformer_dropout_attention[0],
         dropout_act=args.transformer_dropout_act[0],
         dropout_prepost=args.transformer_dropout_prepost[0],
+        pld_limit=args.transformer_pld_limit[0],
+        pld_steps_to_limit=args.transformer_pld_steps_to_limit,
         positional_embedding_type=args.transformer_positional_embedding_type,
         preprocess_sequence=encoder_transformer_preprocess,
         postprocess_sequence=encoder_transformer_postprocess,
@@ -497,6 +502,8 @@ def create_decoder_config(args: argparse.Namespace,
         dropout_attention=args.transformer_dropout_attention[1],
         dropout_act=args.transformer_dropout_act[1],
         dropout_prepost=args.transformer_dropout_prepost[1],
+        pld_limit=args.transformer_pld_limit[1],
+        pld_steps_to_limit=args.transformer_pld_steps_to_limit,
         positional_embedding_type=args.transformer_positional_embedding_type,
         preprocess_sequence=decoder_transformer_preprocess,
         postprocess_sequence=decoder_transformer_postprocess,
@@ -994,6 +1001,8 @@ def train(args: argparse.Namespace, custom_metrics_logger: Optional[Callable] = 
     sockeye_model.to(device)
     sockeye_model.apply(model.initialize_parameters)
 
+    using_layerdrop = model_config.config_encoder.pld_limit > .0 or model_config.config_decoder.pld_limit > .0
+
     # Load starting parameters if specified
     if args.params is not None:
         sockeye_model.load_parameters(filename=args.params,
@@ -1026,16 +1035,19 @@ def train(args: argparse.Namespace, custom_metrics_logger: Optional[Callable] = 
         # https://nvidia.github.io/apex/amp.html#o2-almost-fp16-mixed-precision
         training_model, optimizer = apex.amp.initialize(training_model, optimizer, opt_level='O2')
 
-    logger.info('Tracing model on a validation batch')
-    batch = eval_iter.next().load(device=device)  # pylint: disable=not-callable
-    # When using AMP, turn on autocasting when tracing the model so that
-    # dtypes will match during AMP training. Disable the weight cache for
-    # compatibility with tracing. See:
-    # https://github.com/pytorch/pytorch/pull/63552
-    with torch.cuda.amp.autocast(cache_enabled=False) if args.amp else utils.no_context():  # type: ignore
-        training_model = torch.jit.trace(training_model, (batch.source, batch.source_length,
-                                                          batch.target, batch.target_length), strict=False)
-    eval_iter.reset()
+    if using_layerdrop:
+        logger.info('Skipping trace when using LayerDrop')
+    else:
+        logger.info('Tracing model on a validation batch')
+        batch = eval_iter.next().load(device=device)  # pylint: disable=not-callable
+        # When using AMP, turn on autocasting when tracing the model so that
+        # dtypes will match during AMP training. Disable the weight cache for
+        # compatibility with tracing. See:
+        # https://github.com/pytorch/pytorch/pull/63552
+        with torch.cuda.amp.autocast(cache_enabled=False) if args.amp else utils.no_context():  # type: ignore
+            training_model = torch.jit.trace(training_model, (batch.source, batch.source_length,
+                                                              batch.target, batch.target_length), strict=False)
+        eval_iter.reset()
 
     if utils.is_distributed():
         # In distributed mode, wrap the traced model with a distributed
@@ -1043,7 +1055,8 @@ def train(args: argparse.Namespace, custom_metrics_logger: Optional[Callable] = 
         # in other worker processes.
         training_model = torch.nn.parallel.DistributedDataParallel(training_model,
                                                                    device_ids=None if args.use_cpu else [device],
-                                                                   output_device=None if args.use_cpu else device)
+                                                                   output_device=None if args.use_cpu else device,
+                                                                   find_unused_parameters=using_layerdrop)
 
     losses = create_losses(args, all_num_classes=target_vocab_sizes)
 

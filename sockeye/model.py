@@ -222,8 +222,9 @@ class SockeyeModel(pt.nn.Module):
 
     def _embed_and_encode(self,
                           source: pt.Tensor, source_length: pt.Tensor,
-                          target: pt.Tensor) -> Tuple[pt.Tensor, pt.Tensor, pt.Tensor, List[pt.Tensor],
-                                                      Optional[pt.Tensor]]:
+                          target: pt.Tensor,
+                          time_step: int = 0) -> Tuple[pt.Tensor, pt.Tensor, pt.Tensor, List[pt.Tensor],
+                                                       Optional[pt.Tensor]]:
         """
         Encode the input sequence, embed the target sequence, and initialize the decoder.
         Used for training.
@@ -231,12 +232,13 @@ class SockeyeModel(pt.nn.Module):
         :param source: Source input data.
         :param source_length: Length of source inputs.
         :param target: Target input data.
+        :param time_step: Optional training time step.
         :return: encoder outputs and lengths, target embeddings, decoder initial states, attention mask and neural
                  vocab selection prediction (if present, otherwise None).
         """
         source_embed = self.embedding_source(source)
         target_embed = self.embedding_target(target)
-        source_encoded, source_encoded_length, att_mask = self.encoder(source_embed, source_length)
+        source_encoded, source_encoded_length, att_mask = self.encoder(source_embed, source_length, time_step=time_step)
         states = self.decoder.init_state_from_encoder(source_encoded, source_encoded_length, target_embed)
         nvs = None
         if self.nvs is not None:
@@ -277,17 +279,24 @@ class SockeyeModel(pt.nn.Module):
         new_states = decode_step_outputs[self.num_target_factors:]
         return step_output, new_states, target_factor_outputs
 
-    def forward(self, source, source_length, target, target_length):  # pylint: disable=arguments-differ
+    def forward(self,
+                source,
+                source_length,
+                target,
+                target_length,
+                time_step: int = 0):  # pylint: disable=arguments-differ
         # When updating only the decoder (specified directly or implied by
         # caching the encoder and embedding forward passes), turn off autograd
         # for the encoder and embeddings to save memory.
-        with pt.no_grad() if self.train_decoder_only or self.forward_pass_cache_size > 0 else utils.no_context():
+        with (pt.no_grad() if self.train_decoder_only or self.forward_pass_cache_size > 0
+              else utils.no_context()):  # type: ignore
             source_encoded, source_encoded_length, target_embed, states, nvs_prediction = self.embed_and_encode(
                 source,
                 source_length,
-                target)
+                target,
+                time_step=time_step)
 
-        target = self.decoder.decode_seq(target_embed, states=states)
+        target = self.decoder.decode_seq(target_embed, states=states, time_step=time_step)
 
         forward_output = dict()
 
@@ -526,8 +535,8 @@ class SockeyeModel(pt.nn.Module):
 
     def _cache_wrapper(self, class_func):
         @lru_cache(maxsize=self.forward_pass_cache_size)
-        def cache_func(*args):
-            return class_func(*args)
+        def cache_func(*args, **kwargs):
+            return class_func(*args, **kwargs)
 
         return cache_func
 

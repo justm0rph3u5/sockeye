@@ -13,6 +13,8 @@
 
 
 from dataclasses import dataclass
+import math
+import random
 from typing import Optional, Tuple
 
 import torch as pt
@@ -41,6 +43,8 @@ class TransformerConfig(config.Config):
     use_lhuc: bool = False
     depth_key_value: int = 0
     use_glu: bool = False
+    pld_limit: float = .0
+    pld_steps_to_limit: int = 0
 
 
 class TransformerEncoderBlock(pt.nn.Module):
@@ -79,12 +83,17 @@ class TransformerEncoderBlock(pt.nn.Module):
         if config.use_lhuc:
             self.lhuc = sockeye.layers.LHUC(config.model_size)
 
-    def forward(self, data: pt.Tensor, att_mask: pt.Tensor = None) -> pt.Tensor:
+    def forward(self, data: pt.Tensor, att_mask: pt.Tensor = None, p_gate: float = 1.) -> pt.Tensor:
         """
         :param data: Input tensor of shape (length, batch_size, hidden)
         :param att_mask: Optional data length mask of shape (batch_size * self.heads, 1, length)
                          to mask self-attention scores. True for padding positions.
+        :param p_gate: LayerDrop: probability of choosing this layer. (Default: 1.).
         """
+        if self.training and p_gate < 1. and random.random() > p_gate:
+            # LayerDrop: skip layer
+            return data
+
         # self-attention
         data_self_att, _ = self.self_attention(inputs=self.pre_self_attention(data),
                                                previous_states=None,
@@ -99,6 +108,10 @@ class TransformerEncoderBlock(pt.nn.Module):
 
         if self.lhuc is not None:
             data = self.lhuc(data)
+
+        if self.training and p_gate < 1.:
+            # LayerDrop: scale selected layer output
+            data = data / p_gate
 
         return data
 
@@ -185,7 +198,13 @@ class TransformerDecoderBlock(pt.nn.Module):
                 source: pt.Tensor,
                 source_mask: Optional[pt.Tensor],
                 autoregr_states: Optional[pt.Tensor],
-                enc_att_kv: Optional[pt.Tensor] = None) -> Tuple[pt.Tensor, pt.Tensor]:
+                enc_att_kv: Optional[pt.Tensor] = None,
+                p_gate: float = 1.) -> Tuple[pt.Tensor, pt.Tensor]:
+
+        if self.training and p_gate < 1. and random.random() > p_gate:
+            # LayerDrop: skip layer
+            return target, autoregr_states
+
         target_autoregr, *new_autoregr_states = self.autoregr_layer(inputs=self.pre_autoregr_layer(target),
                                                                     previous_states=autoregr_states,
                                                                     mask=target_mask)
@@ -206,6 +225,10 @@ class TransformerDecoderBlock(pt.nn.Module):
 
         if self.lhuc:
             target = self.lhuc(target)
+
+        if self.training and p_gate < 1.:
+            # LayerDrop: scale selected layer output
+            target = target / p_gate
 
         return target, new_autoregr_states
 
@@ -303,3 +326,18 @@ class AutoRegressiveMask(pt.nn.Module):
         mask = pt.full((x.shape[1], x.shape[1]), fill_value=1, device=x.device, dtype=pt.bool)
         mask = pt.triu(mask, diagonal=1)
         return mask.detach()  # Shape: (len, len)
+
+
+def get_pld_theta(t: int, limit: float, steps_to_limit: int) -> float:
+    """
+    Compute LayerDrop rate for the current time step. This is equation 2 in
+    "Accelerating Training of Transformer-Based Language Models with Progressive
+    Layer Dropping" (Zhang and He. 2020, https://arxiv.org/abs/2010.13369).
+
+    :param t: Current time step.
+    :param limit: Maximum drop rate (theta bar).
+    :param steps_to_limit: Number of time steps to reach the maximum drop rate.
+
+    :return: Drop rate (theta bar of t) for current time step.
+    """
+    return (1 - limit) * math.exp(-(100 / steps_to_limit) * t) + limit

@@ -94,13 +94,14 @@ class Decoder(pt.nn.Module):
         raise NotImplementedError()
 
     @abstractmethod
-    def decode_seq(self, inputs: pt.Tensor, states: List[pt.Tensor]) -> pt.Tensor:
+    def decode_seq(self, inputs: pt.Tensor, states: List[pt.Tensor], time_step: int = 0) -> pt.Tensor:
         """
         Decodes a sequence of embedded target words and returns sequence of last decoder
         representations for each time step.
 
         :param inputs: Encoded source: (batch_size, source_encoded_max_length, encoder_depth).
         :param states: List of initial states, as given by init_state_from_encoder().
+        :param time_step: Optional training time step.
         :return: Decoder output. Shape: (batch_size, target_embed_max_length, decoder_depth).
         """
         raise NotImplementedError()
@@ -220,19 +221,23 @@ class TransformerDecoder(Decoder):
         states += dummy_autoregr_states
         return states
 
-    def decode_seq(self, inputs: pt.Tensor, states: List[pt.Tensor]) -> pt.Tensor:
+    def decode_seq(self, inputs: pt.Tensor, states: List[pt.Tensor], time_step: int = 0) -> pt.Tensor:
         """
         Decodes a sequence of embedded target words and returns sequence of last decoder
         representations for each time step.
 
         :param inputs: Encoded source: (batch_size, source_encoded_max_length, encoder_depth).
         :param states: List of initial states, as given by init_state_from_encoder().
+        :param time_step: Optional training time step.
         :return: Decoder output. Shape: (batch_size, target_embed_max_length, decoder_depth).
         """
-        outputs, _ = self.forward(inputs, states)
+        outputs, _ = self.forward(inputs, states, time_step=time_step)
         return outputs
 
-    def forward(self, step_input: pt.Tensor, states: List[pt.Tensor]) -> Tuple[pt.Tensor, List[pt.Tensor]]:
+    def forward(self,
+                step_input: pt.Tensor,
+                states: List[pt.Tensor],
+                time_step: int = 0) -> Tuple[pt.Tensor, List[pt.Tensor]]:
         target_mask = None
         if self.inference_only:
             steps, source_mask, *other = states
@@ -262,13 +267,19 @@ class TransformerDecoder(Decoder):
             target = self.dropout(target)
 
         new_autoregr_states = []  # type: List[pt.Tensor]
-        for layer, layer_autoregr_state, layer_enc_att_kv in zip(self.layers, autoregr_states, enc_att_kv):
+        pld_theta = transformer.get_pld_theta(time_step, self.config.pld_limit, self.config.pld_steps_to_limit) \
+            if time_step > 0 and self.config.pld_limit > .0 else 1.
+        for (i, layer), layer_autoregr_state, layer_enc_att_kv in zip(enumerate(self.layers, 1),
+                                                                      autoregr_states,
+                                                                      enc_att_kv):
             target, new_layer_autoregr_state = layer(target=target,
                                                      target_mask=target_mask,
                                                      source=source_encoded,
                                                      source_mask=source_mask_view,
                                                      autoregr_states=layer_autoregr_state,
-                                                     enc_att_kv=layer_enc_att_kv)
+                                                     enc_att_kv=layer_enc_att_kv,
+                                                     p_gate=1. if pld_theta == 1. \
+                                                            else 1. - (i / len(self.layers)) * (1. - pld_theta))
 
             new_autoregr_states += [*new_layer_autoregr_state]
 

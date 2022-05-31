@@ -182,7 +182,10 @@ class TransformerEncoder(Encoder):
                                                                  dropout=config.dropout_prepost,
                                                                  num_hidden=self.config.model_size)
 
-    def forward(self, data: pt.Tensor, valid_length: pt.Tensor) -> Tuple[pt.Tensor, pt.Tensor, pt.Tensor]:
+    def forward(self,
+                data: pt.Tensor,
+                valid_length: pt.Tensor,
+                time_step: int = 0) -> Tuple[pt.Tensor, pt.Tensor, pt.Tensor]:
         # positional embedding
         data = self.pos_embedding(data)
 
@@ -197,9 +200,11 @@ class TransformerEncoder(Encoder):
         att_mask = att_mask.expand(-1, max_len, -1)
 
         data = data.transpose(1, 0)  # batch to time major
-        for layer in self.layers:
-            data = layer(data, att_mask=att_mask)
-
+        pld_theta = transformer.get_pld_theta(time_step, self.config.pld_limit, self.config.pld_steps_to_limit) \
+            if time_step > 0 and self.config.pld_limit > .0 else 1.
+        for i, layer in enumerate(self.layers, 1):
+            data = layer(data, att_mask=att_mask, p_gate=1. if pld_theta == 1. \
+                                                         else 1. - (i / len(self.layers)) * (1. - pld_theta))
         data = self.final_process(data)
         data = data.transpose(1, 0)  # time to batch major
         return data, valid_length, single_head_att_mask

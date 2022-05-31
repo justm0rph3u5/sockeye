@@ -189,6 +189,8 @@ def test_inference_args(test_params, expected_params):
               transformer_dropout_attention=(0.1, 0.1),
               transformer_dropout_act=(0.1, 0.1),
               transformer_dropout_prepost=(0.1, 0.1),
+              transformer_pld_limit=(.0, .0),
+              transformer_pld_steps_to_limit=0,
               optimizer='adam',
               optimizer_betas=(0.9, 0.999),
               optimizer_eps=1e-08,

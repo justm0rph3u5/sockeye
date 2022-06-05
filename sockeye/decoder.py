@@ -267,8 +267,9 @@ class TransformerDecoder(Decoder):
             target = self.dropout(target)
 
         new_autoregr_states = []  # type: List[pt.Tensor]
-        pld_theta = transformer.get_pld_theta(time_step, self.config.pld_limit, self.config.pld_steps_to_limit) \
-            if time_step > 0 and self.config.pld_limit > .0 else 1.
+        p_gate = 1. - self.config.layerdrop
+        if time_step > 0 and self.config.pld_limit > .0:
+            p_gate = transformer.get_pld_theta(time_step, self.config.pld_limit, self.config.pld_steps_to_limit)
         for (i, layer), layer_autoregr_state, layer_enc_att_kv in zip(enumerate(self.layers, 1),
                                                                       autoregr_states,
                                                                       enc_att_kv):
@@ -278,8 +279,8 @@ class TransformerDecoder(Decoder):
                                                      source_mask=source_mask_view,
                                                      autoregr_states=layer_autoregr_state,
                                                      enc_att_kv=layer_enc_att_kv,
-                                                     p_gate=1. if pld_theta == 1. \
-                                                            else 1. - (i / len(self.layers)) * (1. - pld_theta))
+                                                     p_gate=1. - (i / len(self.layers)) * (1. - p_gate)
+                                                            if self.config.pld_limit > 0 else p_gate)
 
             new_autoregr_states += [*new_layer_autoregr_state]
 

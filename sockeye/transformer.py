@@ -43,6 +43,7 @@ class TransformerConfig(config.Config):
     use_lhuc: bool = False
     depth_key_value: int = 0
     use_glu: bool = False
+    layerdrop: float = .0
     pld_limit: float = .0
     pld_steps_to_limit: int = 0
 

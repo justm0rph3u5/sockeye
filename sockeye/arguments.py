@@ -932,6 +932,11 @@ def add_training_args(params):
                               default=(0.1, 0.1),
                               help='Dropout probability for pre/postprocessing blocks. Use "x:x" to specify separate '
                                    'values for encoder & decoder. Default: %(default)s.')
+    train_params.add_argument('--transformer-layerdrop',
+                              type=multiple_values(2, data_type=float),
+                              default=(.0, .0),
+                              help='Apply LayerDrop with a fixed rate (Fan et al 2019, arxiv.org/abs/1909.11556). Use '
+                                   '"x:x" to specify separate values for encoder & decoder. Default: %(default)s.')
     train_params.add_argument('--transformer-pld-limit',
                               type=multiple_values(2, data_type=float),
                               default=(.0, .0),

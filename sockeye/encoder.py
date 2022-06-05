@@ -200,11 +200,12 @@ class TransformerEncoder(Encoder):
         att_mask = att_mask.expand(-1, max_len, -1)
 
         data = data.transpose(1, 0)  # batch to time major
-        pld_theta = transformer.get_pld_theta(time_step, self.config.pld_limit, self.config.pld_steps_to_limit) \
-            if time_step > 0 and self.config.pld_limit > .0 else 1.
+        p_gate = 1. - self.config.layerdrop
+        if time_step > 0 and self.config.pld_limit > .0:
+            p_gate = transformer.get_pld_theta(time_step, self.config.pld_limit, self.config.pld_steps_to_limit)
         for i, layer in enumerate(self.layers, 1):
-            data = layer(data, att_mask=att_mask, p_gate=1. if pld_theta == 1. \
-                                                         else 1. - (i / len(self.layers)) * (1. - pld_theta))
+            data = layer(data, att_mask=att_mask, p_gate=1. - (i / len(self.layers)) * (1. - p_gate)
+                                                         if self.config.pld_limit > 0 else p_gate)
         data = self.final_process(data)
         data = data.transpose(1, 0)  # time to batch major
         return data, valid_length, single_head_att_mask

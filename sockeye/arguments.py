@@ -937,17 +937,6 @@ def add_training_args(params):
                               default=(.0, .0),
                               help='Apply LayerDrop with a fixed rate (Fan et al 2019, arxiv.org/abs/1909.11556). Use '
                                    '"x:x" to specify separate values for encoder & decoder. Default: %(default)s.')
-    train_params.add_argument('--transformer-pld-limit',
-                              type=multiple_values(2, data_type=float),
-                              default=(.0, .0),
-                              help='Apply progressive LayerDrop (Zhang and He 2020, arxiv.org/abs/2010.13369) with the '
-                                   'specified limit (theta bar). Use "x:x" to specify separate values for encoder & '
-                                   'decoder. Default: %(default)s.')
-    train_params.add_argument('--transformer-pld-steps-to-limit',
-                              type=int_greater_or_equal(0),
-                              default=0,
-                              help='Number of steps to reach theta limit for progressive LayerDrop. It is recommended '
-                                   'to use the same value as --max-updates. Default: %(default)s.')
 
 
     train_params.add_argument('--optimizer',

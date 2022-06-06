@@ -44,8 +44,6 @@ class TransformerConfig(config.Config):
     depth_key_value: int = 0
     use_glu: bool = False
     layerdrop: float = .0
-    pld_limit: float = .0
-    pld_steps_to_limit: int = 0
 
 
 class TransformerEncoderBlock(pt.nn.Module):
@@ -327,18 +325,3 @@ class AutoRegressiveMask(pt.nn.Module):
         mask = pt.full((x.shape[1], x.shape[1]), fill_value=1, device=x.device, dtype=pt.bool)
         mask = pt.triu(mask, diagonal=1)
         return mask.detach()  # Shape: (len, len)
-
-
-def get_pld_theta(t: int, limit: float, steps_to_limit: int) -> float:
-    """
-    Compute LayerDrop rate for the current time step. This is equation 2 in
-    "Accelerating Training of Transformer-Based Language Models with Progressive
-    Layer Dropping" (Zhang and He. 2020, https://arxiv.org/abs/2010.13369).
-
-    :param t: Current time step.
-    :param limit: Maximum drop rate (theta bar).
-    :param steps_to_limit: Number of time steps to reach the maximum drop rate.
-
-    :return: Drop rate (theta bar of t) for current time step.
-    """
-    return (1 - limit) * math.exp(-(100 / steps_to_limit) * t) + limit

@@ -131,11 +131,6 @@ def check_arg_compatibility(args: argparse.Namespace):
         logger.warning('Specifying a non-float32 dtype to sockeye.train has no effect. Use --amp or --apex-amp for '
                        'mixed precision training.')
 
-    if args.transformer_pld_limit != (.0, .0):
-        check_condition(args.transformer_pld_steps_to_limit > 0, 'Specify --transformer-pld-steps-to-limit.')
-        check_condition(args.transformer_layerdrop == (.0, .0),
-                        'Specify either --transformer-pld-limit or --transformer-layerdrop.')
-
 
 def check_resume(args: argparse.Namespace, output_folder: str) -> bool:
     """
@@ -450,8 +445,6 @@ def create_encoder_config(args: argparse.Namespace,
         dropout_act=args.transformer_dropout_act[0],
         dropout_prepost=args.transformer_dropout_prepost[0],
         layerdrop=args.transformer_layerdrop[0],
-        pld_limit=args.transformer_pld_limit[0],
-        pld_steps_to_limit=args.transformer_pld_steps_to_limit,
         positional_embedding_type=args.transformer_positional_embedding_type,
         preprocess_sequence=encoder_transformer_preprocess,
         postprocess_sequence=encoder_transformer_postprocess,
@@ -506,8 +499,6 @@ def create_decoder_config(args: argparse.Namespace,
         dropout_act=args.transformer_dropout_act[1],
         dropout_prepost=args.transformer_dropout_prepost[1],
         layerdrop=args.transformer_layerdrop[1],
-        pld_limit=args.transformer_pld_limit[1],
-        pld_steps_to_limit=args.transformer_pld_steps_to_limit,
         positional_embedding_type=args.transformer_positional_embedding_type,
         preprocess_sequence=decoder_transformer_preprocess,
         postprocess_sequence=decoder_transformer_postprocess,
@@ -1005,8 +996,7 @@ def train(args: argparse.Namespace, custom_metrics_logger: Optional[Callable] = 
     sockeye_model.to(device)
     sockeye_model.apply(model.initialize_parameters)
 
-    using_layerdrop = model_config.config_encoder.layerdrop > .0 or model_config.config_decoder.layerdrop > .0 \
-                      or model_config.config_encoder.pld_limit > .0 or model_config.config_decoder.pld_limit > .0
+    using_layerdrop = model_config.config_encoder.layerdrop > .0 or model_config.config_decoder.layerdrop > .0
 
     # Load starting parameters if specified
     if args.params is not None:
